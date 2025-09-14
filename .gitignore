@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
+
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+.env
+
+# Distribution / packaging
+.Python
+build/
+dist/
+develop-eggs/
+sdist/
+*.egg
+*.whl
+
+# Editors and IDEs
+# Visual Studio Code
+.vscode/
+
+# milvus
+*.db
+*.db.lock
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Miscellaneous
+*.log
+*.sqlite3
+instance/
+.DS_Store # macOS specific

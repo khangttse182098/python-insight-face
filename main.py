@@ -1,4 +1,3 @@
-from pandas.io.html import pprint_thing
 from pymilvus import MilvusClient
 from fastapi import FastAPI, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,10 +5,16 @@ from fastapi.responses import JSONResponse
 from insightface.app import FaceAnalysis
 import cv2
 import numpy as np
+from dotenv import load_dotenv
+import os
 
-client = MilvusClient("./milvus.db")
-if not client.has_collection("face_embedding"):
-    client.create_collection(collection_name="face_embedding", dimension=512)
+load_dotenv()
+
+face_collection = os.getenv("face_embedding", "")
+
+milvus = MilvusClient("./milvus.db")
+if not milvus.has_collection(face_collection):
+    milvus.create_collection(collection_name=face_collection, dimension=512)
 
 app = FastAPI()
 
@@ -24,6 +29,18 @@ app.add_middleware(
 # Load the face analysis model
 model = FaceAnalysis(providers=['CPUExecutionProvider'])
 model.prepare(ctx_id=0, det_size=(640, 640))
+
+@app.post("/register")
+async def register(res: Response, userCode: str = Form(...), img: UploadFile = Form(...)):
+    # Check if user already has 4 images
+    image_list = milvus.query(collection_name=face_collection, filter=f"userCode == {userCode}", output_fields=["vector"])
+    if len(image_list) == 4: 
+        return JSONResponse(status_code=400, content={"message": "Đã có đủ hình ảnh!"})
+
+    # Get the pose
+
+    # Check if the pose already exist
+    # Add the pose to database if not exist
 
 @app.post("/verify")
 async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
@@ -53,11 +70,11 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
         
         # Add temp data
         # tmp_db_data = [{"id": k, "code": 10, "vector": v} for k, v in enumerate(multi_embeddings)]
-        # db_res = client.insert(collection_name="face_embedding", data=tmp_db_data)
+        # db_res = client.insert(collection_name=face_collection, data=tmp_db_data)
 
         # Get current user
-        db_res = client.query(
-            collection_name="face_embedding",
+        db_res = milvus.query(
+            collection_name=face_collection,
             filter="code == 10",
             output_fields=["vector"],
         )
