@@ -7,14 +7,15 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 import os
+from utils import convert_image_to_np_array
 
 load_dotenv()
 
-face_collection = os.getenv("face_embedding", "")
+face_collection = os.getenv("face_embedding", "placeholder")
 
-milvus = MilvusClient("./milvus.db")
-if not milvus.has_collection(face_collection):
-    milvus.create_collection(collection_name=face_collection, dimension=512)
+milvusClient = MilvusClient("./milvus.db")
+if not milvusClient.has_collection(face_collection):
+    milvusClient.create_collection(collection_name=face_collection, dimension=512)
 
 app = FastAPI()
 
@@ -33,11 +34,19 @@ model.prepare(ctx_id=0, det_size=(640, 640))
 @app.post("/register")
 async def register(res: Response, userCode: str = Form(...), img: UploadFile = Form(...)):
     # Check if user already has 4 images
-    image_list = milvus.query(collection_name=face_collection, filter=f"userCode == {userCode}", output_fields=["vector"])
+    image_list = milvusClient.query(collection_name=face_collection, filter=f"code == {userCode}", output_fields=["vector"])
     if len(image_list) == 4: 
-        return JSONResponse(status_code=400, content={"message": "Đã có đủ hình ảnh!"})
+        return JSONResponse(status_code=409, content={"message": "Đã có đủ hình ảnh!"})
 
-    # Get the pose
+    # verify if there are faces
+    decodedImg = convert_image_to_np_array(img)
+    face_list = model.get(decodedImg)
+
+    # return if multiple faces detected
+    if len(face_list) > 1:
+        return JSONResponse(status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"})
+
+    # Get the pose 
 
     # Check if the pose already exist
     # Add the pose to database if not exist
@@ -57,28 +66,24 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
             embedding = faces[0].normed_embedding
             multi_embeddings.append(embedding)
 
-
-    # Load target images
-    contents = comparedImg.file.read()
-    # Convert bytes to numpy array
-    nparr = np.frombuffer(contents, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    compared_face = model.get(img)
+    # convert to array
+    decodedImg = convert_image_to_np_array(comparedImg)
+    compared_face = model.get(decodedImg)
 
     if len(compared_face) > 0:
         compared_face_embedding = compared_face[0].normed_embedding
         
         # Add temp data
         # tmp_db_data = [{"id": k, "code": 10, "vector": v} for k, v in enumerate(multi_embeddings)]
-        # db_res = client.insert(collection_name=face_collection, data=tmp_db_data)
+        # db_res = milvusClient.insert(collection_name=face_collection, data=tmp_db_data)
 
         # Get current user
-        db_res = milvus.query(
+        db_res = milvusClient.query(
             collection_name=face_collection,
             filter="code == 10",
             output_fields=["vector"],
         )
-        # print(db_res)
+        print(db_res)
 
         # Compute similarity (cosine distance) to all target embeddings
         similarities = [np.dot(compared_face_embedding, e) for e in multi_embeddings]
@@ -92,6 +97,6 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
             return JSONResponse(status_code=200, content={"message": "Khuôn mặt trùng khớp!"})
         else:
             print("Unknown person")
-            return JSONResponse(status_code=400, content={"message": "Khuôn mặt không trùng khớp!"})
+            return JSONResponse(status_code=422, content={"message": "Khuôn mặt không trùng khớp!"})
     else:
         return JSONResponse(status_code=404, content={"message": "Không tìm thấy khuôn mặt!"})
