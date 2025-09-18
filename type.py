@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypedDict, List
+from typing import Optional, TypedDict, List
 import numpy as np
 
 
@@ -14,7 +14,6 @@ class Pose(Enum):
 
 @dataclass
 class FaceRecord:
-    id: int
     code: str
     pose: Pose
     vector: np.ndarray

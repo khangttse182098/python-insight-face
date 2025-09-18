@@ -8,8 +8,9 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 import os
-from type import FaceRecord
+from type import FaceRecord, Pose
 from utils import classify_pose, compute_pose, convert_image_to_np_array
+from schema import face_schema
 
 load_dotenv()
 
@@ -17,7 +18,9 @@ face_collection = os.getenv("face_embedding", "placeholder")
 
 milvusClient = MilvusClient("./milvus.db")
 if not milvusClient.has_collection(face_collection):
-    milvusClient.create_collection(collection_name=face_collection, dimension=512)
+    milvusClient.create_collection(
+        collection_name=face_collection, schema=face_schema, dimension=512
+    )
 
 app = FastAPI()
 
@@ -71,14 +74,17 @@ async def register(
     res: Response, userCode: str = Form(...), img: UploadFile = Form(...)
 ):
     # Check if user already has 4 images
-    existed_face_list = cast(
-        List[FaceRecord],
+    existed_face_list = (
         milvusClient.query(
             collection_name=face_collection,
-            filter=f"code == {userCode}",
+            filter=f'code == "{userCode}"',
             output_fields=["vector", "pose"],
         ),
     )
+
+    # unwrap the tuple
+    if isinstance(existed_face_list, tuple):
+        existed_face_list = existed_face_list[0]
 
     if len(existed_face_list) == 4:
         return JSONResponse(status_code=409, content={"message": "Đã có đủ hình ảnh!"})
@@ -103,17 +109,26 @@ async def register(
 
     # Check if the pose already exist
     for e in existed_face_list:
-        if e.pose == new_pose:
+        if e["pose"] == new_pose.value:
             return JSONResponse(
                 status_code=400,
                 content={"message": "Tư thế đã tồn tại!"},
             )
 
     # Add the pose to database if not exist
-    # new_record: FaceRecord = {"id": }
-    # milvusClient.insert(
-    #     collection_name=face_collection,
-    # )
+    new_record = {
+        "code": userCode,
+        "pose": new_pose.value,
+        "vector": new_face.normed_embedding,
+    }
+    milvusClient.insert(collection_name=face_collection, data=new_record)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Thêm tư thế mới thành công!",
+            "data": {"pose": new_pose.value},
+        },
+    )
 
 
 @app.post("/verify")
@@ -137,10 +152,6 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
 
     if len(compared_face) > 0:
         compared_face_embedding = compared_face[0].normed_embedding
-
-        # Add temp data
-        # tmp_db_data = [{"id": k, "code": 10, "vector": v} for k, v in enumerate(multi_embeddings)]
-        # db_res = milvusClient.insert(collection_name=face_collection, data=tmp_db_data)
 
         # Get current user
         db_res = milvusClient.query(
