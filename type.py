@@ -10,10 +10,3 @@ class Pose(Enum):
     RIGHT = 2
     UP = 3
     DOWN = 4
-
-
-@dataclass
-class FaceRecord:
-    code: str
-    pose: Pose
-    vector: np.ndarray

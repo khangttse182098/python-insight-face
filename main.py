@@ -8,14 +8,15 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 import os
-from type import FaceRecord, Pose
 from utils import classify_pose, compute_pose, convert_image_to_np_array
 from schema import face_schema
 
 load_dotenv()
 
+# env
 face_collection = os.getenv("face_embedding", "placeholder")
 
+# milvus client
 milvusClient = MilvusClient("./milvus.db")
 if not milvusClient.has_collection(face_collection):
     milvusClient.create_collection(
@@ -37,47 +38,13 @@ model = FaceAnalysis(providers=["CPUExecutionProvider"])
 model.prepare(ctx_id=0, det_size=(640, 640))
 
 
-@app.post("/pose")
-async def checkPost(res: Response, img: UploadFile = Form(...)):
-    # verify if there are faces
-    decodedImg = convert_image_to_np_array(img)
-    face_list = model.get(decodedImg)
-
-    # return if multiple faces detected
-    if len(face_list) > 1:
-        return JSONResponse(
-            status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"}
-        )
-
-    # Get the pose
-    face = face_list[0]
-    landmarks = face.landmark_2d_106
-    # show landmarks
-    # scale = 0.3  # shrink to 30% size
-    # resized = cv2.resize(decodedImg, None, fx=scale, fy=scale)
-    #
-    # for i, (x, y) in enumerate(landmarks):
-    #     x, y = int(x * scale), int(y * scale)  # scale landmarks too
-    #     cv2.putText(resized, str(i), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-    #
-    # cv2.imshow("Landmarks", resized)
-    # cv2.waitKey(0)
-    yaw, pitch, roll = compute_pose(decodedImg, landmarks)
-    pose = classify_pose(yaw, pitch, roll)
-    print("Pose:", pose)
-
-    return JSONResponse(status_code=200, content={"message": f"{pose}"})
-
-
 @app.post("/register")
-async def register(
-    res: Response, userCode: str = Form(...), img: UploadFile = Form(...)
-):
+async def register(res: Response, userId: str = Form(...), img: UploadFile = Form(...)):
     # Check if user already has 4 images
     existed_face_list = (
         milvusClient.query(
             collection_name=face_collection,
-            filter=f'code == "{userCode}"',
+            filter=f'code == "{userId}"',
             output_fields=["vector", "pose"],
         ),
     )
@@ -117,7 +84,7 @@ async def register(
 
     # Add the pose to database if not exist
     new_record = {
-        "code": userCode,
+        "code": userId,
         "pose": new_pose.value,
         "vector": new_face.normed_embedding,
     }
@@ -132,19 +99,21 @@ async def register(
 
 
 @app.post("/verify")
-async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
+async def verify_person(
+    res: Response, userId: str = Form(...), comparedImg: UploadFile = Form(...)
+):
+    # get user face vectors
+    face_vector_list = (
+        milvusClient.query(
+            collection_name=face_collection,
+            filter=f'code == "{userId}"',
+            output_fields=["vector"],
+        ),
+    )
 
-    # Load images
-    multi_images = ["front.jpg", "left.jpg", "right.jpg", "up.jpg"]
-    multi_embeddings = []
-
-    for img_path in multi_images:
-        # prepare for model
-        img = cv2.imread(img_path)
-        faces = model.get(img)
-        if len(faces) > 0:
-            embedding = faces[0].normed_embedding
-            multi_embeddings.append(embedding)
+    # unwrap the tuple
+    if isinstance(face_vector_list, tuple):
+        face_vector_list = face_vector_list[0]
 
     # convert to array
     decodedImg = convert_image_to_np_array(comparedImg)
@@ -153,16 +122,10 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
     if len(compared_face) > 0:
         compared_face_embedding = compared_face[0].normed_embedding
 
-        # Get current user
-        db_res = milvusClient.query(
-            collection_name=face_collection,
-            filter="code == 10",
-            output_fields=["vector"],
-        )
-        print(db_res)
-
         # Compute similarity (cosine distance) to all target embeddings
-        similarities = [np.dot(compared_face_embedding, e) for e in multi_embeddings]
+        similarities = [
+            np.dot(compared_face_embedding, e["vector"]) for e in face_vector_list
+        ]
 
         # Take the maximum similarity
         max_similarity = max(similarities)
