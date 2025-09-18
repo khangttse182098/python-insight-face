@@ -1,3 +1,4 @@
+from typing import List, cast
 from pymilvus import MilvusClient
 from fastapi import FastAPI, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 import os
+from type import FaceRecord
 from utils import classify_pose, compute_pose, convert_image_to_np_array
 
 load_dotenv()
@@ -28,8 +30,9 @@ app.add_middleware(
 )
 
 # Load the face analysis model
-model = FaceAnalysis(providers=['CPUExecutionProvider'])
+model = FaceAnalysis(providers=["CPUExecutionProvider"])
 model.prepare(ctx_id=0, det_size=(640, 640))
+
 
 @app.post("/pose")
 async def checkPost(res: Response, img: UploadFile = Form(...)):
@@ -39,9 +42,11 @@ async def checkPost(res: Response, img: UploadFile = Form(...)):
 
     # return if multiple faces detected
     if len(face_list) > 1:
-        return JSONResponse(status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"})
+        return JSONResponse(
+            status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"}
+        )
 
-    # Get the pose 
+    # Get the pose
     face = face_list[0]
     landmarks = face.landmark_2d_106
     # show landmarks
@@ -60,11 +65,22 @@ async def checkPost(res: Response, img: UploadFile = Form(...)):
 
     return JSONResponse(status_code=200, content={"message": f"{pose}"})
 
+
 @app.post("/register")
-async def register(res: Response, userCode: str = Form(...), img: UploadFile = Form(...)):
+async def register(
+    res: Response, userCode: str = Form(...), img: UploadFile = Form(...)
+):
     # Check if user already has 4 images
-    image_list = milvusClient.query(collection_name=face_collection, filter=f"code == {userCode}", output_fields=["vector"])
-    if len(image_list) == 4: 
+    existed_face_list = cast(
+        List[FaceRecord],
+        milvusClient.query(
+            collection_name=face_collection,
+            filter=f"code == {userCode}",
+            output_fields=["vector", "pose"],
+        ),
+    )
+
+    if len(existed_face_list) == 4:
         return JSONResponse(status_code=409, content={"message": "Đã có đủ hình ảnh!"})
 
     # verify if there are faces
@@ -73,24 +89,38 @@ async def register(res: Response, userCode: str = Form(...), img: UploadFile = F
 
     # return if multiple faces detected
     if len(face_list) > 1:
-        return JSONResponse(status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"})
+        return JSONResponse(
+            status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"}
+        )
 
-    # Get the pose 
-    face = face_list[0]
-    landmarks = face.landmark_2d_106
+    # Get the pose
+    new_face = face_list[0]
+    landmarks = new_face.landmark_2d_106
     yaw, pitch, roll = compute_pose(decodedImg, landmarks)
-    pose = classify_pose(yaw, pitch, roll)
+    new_pose = classify_pose(yaw, pitch, roll)
 
-    print("Pose:", pose)
+    print("Pose:", new_pose)
 
     # Check if the pose already exist
+    for e in existed_face_list:
+        if e.pose == new_pose:
+            return JSONResponse(
+                status_code=400,
+                content={"message": "Tư thế đã tồn tại!"},
+            )
+
     # Add the pose to database if not exist
+    # new_record: FaceRecord = {"id": }
+    # milvusClient.insert(
+    #     collection_name=face_collection,
+    # )
+
 
 @app.post("/verify")
 async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
 
     # Load images
-    multi_images = ['front.jpg', 'left.jpg', 'right.jpg', 'up.jpg'] 
+    multi_images = ["front.jpg", "left.jpg", "right.jpg", "up.jpg"]
     multi_embeddings = []
 
     for img_path in multi_images:
@@ -107,7 +137,7 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
 
     if len(compared_face) > 0:
         compared_face_embedding = compared_face[0].normed_embedding
-        
+
         # Add temp data
         # tmp_db_data = [{"id": k, "code": 10, "vector": v} for k, v in enumerate(multi_embeddings)]
         # db_res = milvusClient.insert(collection_name=face_collection, data=tmp_db_data)
@@ -122,16 +152,22 @@ async def verify_person(res: Response, comparedImg: UploadFile = Form(...)):
 
         # Compute similarity (cosine distance) to all target embeddings
         similarities = [np.dot(compared_face_embedding, e) for e in multi_embeddings]
-        
+
         # Take the maximum similarity
         max_similarity = max(similarities)
         print("Max similarity:", max_similarity)
-        
+
         if max_similarity > 0.6:  # threshold (tune this)
             print("Target person recognized!")
-            return JSONResponse(status_code=200, content={"message": "Khuôn mặt trùng khớp!"})
+            return JSONResponse(
+                status_code=200, content={"message": "Khuôn mặt trùng khớp!"}
+            )
         else:
             print("Unknown person")
-            return JSONResponse(status_code=422, content={"message": "Khuôn mặt không trùng khớp!"})
+            return JSONResponse(
+                status_code=422, content={"message": "Khuôn mặt không trùng khớp!"}
+            )
     else:
-        return JSONResponse(status_code=404, content={"message": "Không tìm thấy khuôn mặt!"})
+        return JSONResponse(
+            status_code=404, content={"message": "Không tìm thấy khuôn mặt!"}
+        )
