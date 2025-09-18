@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from dotenv import load_dotenv
 import os
-from utils import convert_image_to_np_array
+from utils import classify_pose, compute_pose, convert_image_to_np_array
 
 load_dotenv()
 
@@ -31,6 +31,35 @@ app.add_middleware(
 model = FaceAnalysis(providers=['CPUExecutionProvider'])
 model.prepare(ctx_id=0, det_size=(640, 640))
 
+@app.post("/pose")
+async def checkPost(res: Response, img: UploadFile = Form(...)):
+    # verify if there are faces
+    decodedImg = convert_image_to_np_array(img)
+    face_list = model.get(decodedImg)
+
+    # return if multiple faces detected
+    if len(face_list) > 1:
+        return JSONResponse(status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"})
+
+    # Get the pose 
+    face = face_list[0]
+    landmarks = face.landmark_2d_106
+    # show landmarks
+    # scale = 0.3  # shrink to 30% size
+    # resized = cv2.resize(decodedImg, None, fx=scale, fy=scale)
+    #
+    # for i, (x, y) in enumerate(landmarks):
+    #     x, y = int(x * scale), int(y * scale)  # scale landmarks too
+    #     cv2.putText(resized, str(i), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    #
+    # cv2.imshow("Landmarks", resized)
+    # cv2.waitKey(0)
+    yaw, pitch, roll = compute_pose(decodedImg, landmarks)
+    pose = classify_pose(yaw, pitch, roll)
+    print("Pose:", pose)
+
+    return JSONResponse(status_code=200, content={"message": f"{pose}"})
+
 @app.post("/register")
 async def register(res: Response, userCode: str = Form(...), img: UploadFile = Form(...)):
     # Check if user already has 4 images
@@ -47,6 +76,12 @@ async def register(res: Response, userCode: str = Form(...), img: UploadFile = F
         return JSONResponse(status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"})
 
     # Get the pose 
+    face = face_list[0]
+    landmarks = face.landmark_2d_106
+    yaw, pitch, roll = compute_pose(decodedImg, landmarks)
+    pose = classify_pose(yaw, pitch, roll)
+
+    print("Pose:", pose)
 
     # Check if the pose already exist
     # Add the pose to database if not exist
