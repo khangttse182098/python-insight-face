@@ -1,15 +1,17 @@
-from typing import List, cast
 from pymilvus import MilvusClient
 from fastapi import FastAPI, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from insightface.app import FaceAnalysis
-import cv2
 import numpy as np
 from dotenv import load_dotenv
 import os
+
+from pymilvus.client.prepare import json
+from type import Pose
 from utils import classify_pose, compute_pose, convert_image_to_np_array
 from schema import face_schema
+from http import HTTPStatus
 
 load_dotenv()
 
@@ -38,23 +40,48 @@ model = FaceAnalysis(providers=["CPUExecutionProvider"])
 model.prepare(ctx_id=0, det_size=(640, 640))
 
 
-@app.post("/register")
-async def register(res: Response, userId: str = Form(...), img: UploadFile = Form(...)):
-    # Check if user already has 4 images
-    existed_face_list = (
-        milvusClient.query(
-            collection_name=face_collection,
-            filter=f'code == "{userId}"',
-            output_fields=["vector", "pose"],
-        ),
+@app.get("/missing-pose/{userId}")
+async def missing_pose(userId: str):
+    # get existed faces
+    existed_face_list = milvusClient.query(
+        collection_name=face_collection,
+        filter=f'code == "{userId}"',
+        output_fields=["pose"],
     )
 
-    # unwrap the tuple
-    if isinstance(existed_face_list, tuple):
-        existed_face_list = existed_face_list[0]
+    # get all poses
+    all_pose = {e.value for e in Pose}
 
-    if len(existed_face_list) == 4:
-        return JSONResponse(status_code=409, content={"message": "Đã có đủ hình ảnh!"})
+    if len(existed_face_list):
+        existed_pose_list = {e["pose"] for e in existed_face_list}
+
+        # find missing pose
+        missing_pose = all_pose - existed_pose_list
+
+        return JSONResponse(
+            status_code=HTTPStatus.OK,
+            content={"missingPose": json.dumps(list(missing_pose))},
+        )
+    else:
+        return JSONResponse(
+            status_code=HTTPStatus.OK,
+            content={"missingPose": json.dumps(list(all_pose))},
+        )
+
+
+@app.post("/register")
+async def register(userId: str = Form(...), img: UploadFile = Form(...)):
+    # Check if user already has 4 images
+    existed_face_list = milvusClient.query(
+        collection_name=face_collection,
+        filter=f'code == "{userId}"',
+        output_fields=["vector", "pose"],
+    )
+
+    if len(existed_face_list) == len(Pose):
+        return JSONResponse(
+            status_code=HTTPStatus.CONFLICT, content={"message": "Đã có đủ hình ảnh!"}
+        )
 
     # verify if there are faces
     decodedImg = convert_image_to_np_array(img)
@@ -63,7 +90,8 @@ async def register(res: Response, userId: str = Form(...), img: UploadFile = For
     # return if multiple faces detected
     if len(face_list) > 1:
         return JSONResponse(
-            status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"}
+            status_code=HTTPStatus.BAD_REQUEST,
+            content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"},
         )
 
     # Get the pose
@@ -78,7 +106,7 @@ async def register(res: Response, userId: str = Form(...), img: UploadFile = For
     for e in existed_face_list:
         if e["pose"] == new_pose.value:
             return JSONResponse(
-                status_code=400,
+                status_code=HTTPStatus.BAD_REQUEST,
                 content={"message": "Tư thế đã tồn tại!"},
             )
 
@@ -90,7 +118,7 @@ async def register(res: Response, userId: str = Form(...), img: UploadFile = For
     }
     milvusClient.insert(collection_name=face_collection, data=new_record)
     return JSONResponse(
-        status_code=200,
+        status_code=HTTPStatus.OK,
         content={
             "message": "Thêm tư thế mới thành công!",
             "data": {"pose": new_pose.value},
@@ -99,9 +127,7 @@ async def register(res: Response, userId: str = Form(...), img: UploadFile = For
 
 
 @app.post("/verify")
-async def verify_person(
-    res: Response, userId: str = Form(...), comparedImg: UploadFile = Form(...)
-):
+async def verify_person(userId: str = Form(...), comparedImg: UploadFile = Form(...)):
     # get user face vectors
     face_vector_list = (
         milvusClient.query(
@@ -134,14 +160,16 @@ async def verify_person(
         if max_similarity > 0.6:  # threshold (tune this)
             print("Target person recognized!")
             return JSONResponse(
-                status_code=200, content={"message": "Khuôn mặt trùng khớp!"}
+                status_code=HTTPStatus.OK, content={"message": "Khuôn mặt trùng khớp!"}
             )
         else:
             print("Unknown person")
             return JSONResponse(
-                status_code=422, content={"message": "Khuôn mặt không trùng khớp!"}
+                status_code=HTTPStatus.CONFLICT,
+                content={"message": "Khuôn mặt không trùng khớp!"},
             )
     else:
         return JSONResponse(
-            status_code=404, content={"message": "Không tìm thấy khuôn mặt!"}
+            status_code=HTTPStatus.NOT_FOUND,
+            content={"message": "Không tìm thấy khuôn mặt!"},
         )
