@@ -73,7 +73,7 @@ async def missing_pose(userId: str):
 async def register(
     userId: str = Form(...),
     img: UploadFile = Form(...),
-    checkedPose: Optional[int] = Form(None),
+    checkedPose: Optional[str] = Form(None),
 ):
     # Check if user already has 4 images
     existed_face_list = milvusClient.query(
@@ -131,8 +131,10 @@ async def register(
         }
         milvusClient.insert(collection_name=face_collection, data=new_record)
 
+    checkedPoseInt = int(checkedPose) if checkedPose is not None else None
+
     # If checkedPose doesn't match newPose
-    if checkedPose != new_pose.value:
+    if checkedPoseInt != new_pose.value:
         return JSONResponse(
             status_code=HTTPStatus.BAD_REQUEST,
             content={
