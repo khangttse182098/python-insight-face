@@ -1,3 +1,4 @@
+from typing import Optional
 from pymilvus import MilvusClient
 from fastapi import FastAPI, Form, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +8,6 @@ import numpy as np
 from dotenv import load_dotenv
 import os
 
-from pymilvus.client.prepare import json
 from type import Pose
 from utils import classify_pose, compute_pose, convert_image_to_np_array
 from schema import face_schema
@@ -60,17 +60,21 @@ async def missing_pose(userId: str):
 
         return JSONResponse(
             status_code=HTTPStatus.OK,
-            content={"missingPose": json.dumps(list(missing_pose))},
+            content={"missingPose": list(missing_pose)},
         )
     else:
         return JSONResponse(
             status_code=HTTPStatus.OK,
-            content={"missingPose": json.dumps(list(all_pose))},
+            content={"missingPose": list(all_pose)},
         )
 
 
 @app.post("/register")
-async def register(userId: str = Form(...), img: UploadFile = Form(...)):
+async def register(
+    userId: str = Form(...),
+    img: UploadFile = Form(...),
+    checkedPose: Optional[int] = Form(None),
+):
     # Check if user already has 4 images
     existed_face_list = milvusClient.query(
         collection_name=face_collection,
@@ -94,6 +98,13 @@ async def register(userId: str = Form(...), img: UploadFile = Form(...)):
             content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"},
         )
 
+    # return if no face detected
+    if len(face_list) == 0:
+        return JSONResponse(
+            status_code=HTTPStatus.BAD_REQUEST,
+            content={"message": "Không tìm thấy khuôn mặt"},
+        )
+
     # Get the pose
     new_face = face_list[0]
     landmarks = new_face.landmark_2d_106
@@ -110,13 +121,26 @@ async def register(userId: str = Form(...), img: UploadFile = Form(...)):
                 content={"message": "Tư thế đã tồn tại!"},
             )
 
-    # Add the pose to database if not exist
-    new_record = {
-        "code": userId,
-        "pose": new_pose.value,
-        "vector": new_face.normed_embedding,
-    }
-    milvusClient.insert(collection_name=face_collection, data=new_record)
+    # Check if the pose is correctly pass
+    if checkedPose is None:
+        # Add the pose to database if not exist
+        new_record = {
+            "code": userId,
+            "pose": new_pose.value,
+            "vector": new_face.normed_embedding,
+        }
+        milvusClient.insert(collection_name=face_collection, data=new_record)
+
+    # If checkedPose doesn't match newPose
+    if checkedPose != new_pose.value:
+        return JSONResponse(
+            status_code=HTTPStatus.BAD_REQUEST,
+            content={
+                "message": "Tư thế không khớp với yêu cầu!",
+            },
+        )
+
+    # Return if success
     return JSONResponse(
         status_code=HTTPStatus.OK,
         content={
@@ -173,3 +197,35 @@ async def verify_person(userId: str = Form(...), comparedImg: UploadFile = Form(
             status_code=HTTPStatus.NOT_FOUND,
             content={"message": "Không tìm thấy khuôn mặt!"},
         )
+
+
+@app.post("/pose")
+async def checkPost(res: Response, img: UploadFile = Form(...)):
+    # verify if there are faces
+    decodedImg = convert_image_to_np_array(img)
+    face_list = model.get(decodedImg)
+
+    # return if multiple faces detected
+    if len(face_list) > 1:
+        return JSONResponse(
+            status_code=400, content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"}
+        )
+
+    # Get the pose
+    face = face_list[0]
+    landmarks = face.landmark_2d_106
+    # show landmarks
+    # scale = 0.3  # shrink to 30% size
+    # resized = cv2.resize(decodedImg, None, fx=scale, fy=scale)
+    #
+    # for i, (x, y) in enumerate(landmarks):
+    #     x, y = int(x * scale), int(y * scale)  # scale landmarks too
+    #     cv2.putText(resized, str(i), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    #
+    # cv2.imshow("Landmarks", resized)
+    # cv2.waitKey(0)
+    yaw, pitch, roll = compute_pose(decodedImg, landmarks)
+    pose = classify_pose(yaw, pitch, roll)
+    print("Pose:", pose)
+
+    return JSONResponse(status_code=200, content={"message": f"{pose}"})
