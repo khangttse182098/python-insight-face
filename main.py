@@ -36,8 +36,8 @@ app.add_middleware(
 )
 
 # Load the face analysis model
-model = FaceAnalysis(providers=["CPUExecutionProvider"])
-model.prepare(ctx_id=0, det_size=(640, 640))
+rec_model = FaceAnalysis(providers=["CPUExecutionProvider"])
+rec_model.prepare(ctx_id=0, det_size=(640, 640))
 
 
 @app.get("/missing-pose/{userId}")
@@ -89,7 +89,7 @@ async def register(
 
     # verify if there are faces
     decodedImg = convert_image_to_np_array(img)
-    face_list = model.get(decodedImg)
+    face_list = rec_model.get(decodedImg)
 
     # return if multiple faces detected
     if len(face_list) > 1:
@@ -131,10 +131,19 @@ async def register(
         }
         milvusClient.insert(collection_name=face_collection, data=new_record)
 
-    checkedPoseInt = int(checkedPose) if checkedPose is not None else None
+        # Return if success
+        return JSONResponse(
+            status_code=HTTPStatus.OK,
+            content={
+                "message": "Thêm tư thế mới thành công!",
+                "data": {"pose": new_pose.value},
+            },
+        )
 
+    checkedPoseInt = int(checkedPose) if checkedPose is not None else None
     # If checkedPose doesn't match newPose
     if checkedPoseInt != new_pose.value:
+        print(f"checkpose: {checkedPoseInt}, new_pose: {new_pose.value}")
         return JSONResponse(
             status_code=HTTPStatus.BAD_REQUEST,
             content={
@@ -142,6 +151,13 @@ async def register(
             },
         )
 
+    # Add the pose to database if not exist
+    new_record = {
+        "code": userId,
+        "pose": new_pose.value,
+        "vector": new_face.normed_embedding,
+    }
+    milvusClient.insert(collection_name=face_collection, data=new_record)
     # Return if success
     return JSONResponse(
         status_code=HTTPStatus.OK,
@@ -169,7 +185,7 @@ async def verify_person(userId: str = Form(...), comparedImg: UploadFile = Form(
 
     # convert to array
     decodedImg = convert_image_to_np_array(comparedImg)
-    compared_face = model.get(decodedImg)
+    compared_face = rec_model.get(decodedImg)
 
     if len(compared_face) > 0:
         compared_face_embedding = compared_face[0].normed_embedding
@@ -205,7 +221,7 @@ async def verify_person(userId: str = Form(...), comparedImg: UploadFile = Form(
 async def checkPost(res: Response, img: UploadFile = Form(...)):
     # verify if there are faces
     decodedImg = convert_image_to_np_array(img)
-    face_list = model.get(decodedImg)
+    face_list = rec_model.get(decodedImg)
 
     # return if multiple faces detected
     if len(face_list) > 1:
