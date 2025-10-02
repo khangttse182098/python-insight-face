@@ -69,14 +69,21 @@ def compute_pose(image, landmarks):
     return yaw, pitch, roll
 
 
-def classify_pose(yaw, pitch, roll, yaw_thresh=20, pitch_thresh=15):
+def classify_pose(yaw, pitch, roll, yaw_thresh=20, pitch_thresh=0):
+    # First handle "TOP" (looking up strongly)
+    if pitch < pitch_thresh:
+        if yaw > yaw_thresh:
+            return Pose.TOP_RIGHT
+        elif yaw < -yaw_thresh:
+            return Pose.TOP_LEFT
+        else:
+            return Pose.TOP
+
+    # Handle left/right when not looking up
     if yaw > yaw_thresh:
         return Pose.RIGHT
     elif yaw < -yaw_thresh:
         return Pose.LEFT
-    elif pitch > pitch_thresh:
-        return Pose.DOWN
-    elif pitch < -pitch_thresh:
-        return Pose.UP
-    else:
-        return Pose.FRONT
+
+    # Default (centered face)
+    return Pose.FRONT
