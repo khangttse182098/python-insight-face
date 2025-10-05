@@ -40,6 +40,14 @@ rec_model = FaceAnalysis(providers=["CPUExecutionProvider"])
 rec_model.prepare(ctx_id=0, det_size=(640, 640))
 
 
+@app.get("/reset/{userId}")
+async def reset(userId: str):
+    milvusClient.delete(collection_name=face_collection, filter=f'code == "{userId}"')
+    return JSONResponse(
+        status_code=HTTPStatus.OK, content={"message": "Delete success"}
+    )
+
+
 @app.get("/missing-pose/{userId}")
 async def missing_pose(userId: str):
     # get existed faces
@@ -118,7 +126,7 @@ async def register(
         if e["pose"] == new_pose.value:
             return JSONResponse(
                 status_code=HTTPStatus.BAD_REQUEST,
-                content={"message": "Tư thế đã tồn tại!"},
+                content={"message": f"Tư thế {new_pose} đã tồn tại!"},
             )
 
     # Check if the pose is correctly pass

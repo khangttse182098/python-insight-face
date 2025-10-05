@@ -69,7 +69,7 @@ def compute_pose(image, landmarks):
     return yaw, pitch, roll
 
 
-def classify_pose(yaw, pitch, roll, yaw_thresh=20, pitch_thresh=0):
+def classify_pose(yaw, pitch, roll, yaw_thresh=15, pitch_thresh=0):
     # First handle "TOP" (looking up strongly)
     if pitch < pitch_thresh:
         if yaw > yaw_thresh:
