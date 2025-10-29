@@ -5,6 +5,15 @@ import cv2
 from type import Pose
 
 
+def convert_bytes_to_np_array(img: bytes) -> np.ndarray:
+    # Convert bytes to numpy array
+    nparr = np.frombuffer(img, np.uint8)
+    decoded = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if decoded is None:
+        raise ValueError("Image could not be decoded")
+    return decoded
+
+
 def convert_image_to_np_array(img: UploadFile) -> np.ndarray:
     contents = img.file.read()
     # Convert bytes to numpy array

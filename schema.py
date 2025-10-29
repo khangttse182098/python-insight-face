@@ -9,5 +9,4 @@ face_schema.add_field(
     auto_id=True,
 )
 face_schema.add_field(field_name="code", datatype=DataType.VARCHAR, max_length=10)
-face_schema.add_field(field_name="pose", datatype=DataType.INT8)
 face_schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=512)

@@ -1,0 +1,44 @@
+name: Build and deploy to SSH
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      REMOTE_DIR: ${{ secrets.REMOTE_DIR }}
+      CONTAINER_NAME: python-face
+      IMAGE_NAME: python-face:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME .
+
+      - name: Save image to tar
+        run: |
+          docker save $IMAGE_NAME -o image.tar
+
+      - name: Prepare SSH key
+        run: |
+          # Create private key file from secret and set secure perms
+          printf "%s" "$SSH_KEY" > ssh_key
+          chmod 600 ssh_key
+
+      - name: Copy image to remote via SCP
+        run: |
+          scp -o StrictHostKeyChecking=no -i ssh_key -P ${SSH_PORT:-22} image.tar ${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/image.tar
+
+      - name: Load image and restart container on remote
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ssh_key -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} "cd ${REMOTE_DIR} && docker load -i image.tar && docker stop ${CONTAINER_NAME} || true && docker rm ${CONTAINER_NAME} || true && docker run -d --name ${CONTAINER_NAME} -p 8000:8000 --restart unless-stopped ${IMAGE_NAME}"
