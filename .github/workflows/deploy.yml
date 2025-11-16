@@ -13,6 +13,7 @@ jobs:
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_PORT: ${{ secrets.SSH_PORT }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
       REMOTE_DIR: ${{ secrets.REMOTE_DIR }}
       CONTAINER_NAME: python-face
       IMAGE_NAME: python-face:latest
@@ -29,16 +30,36 @@ jobs:
         run: |
           docker save $IMAGE_NAME -o image.tar
 
+      # --- Password-based SSH path (uses sshpass) ---
+      - name: Install sshpass (for password-based SSH)
+        if: ${{ secrets.SSH_PASSWORD != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Copy image to remote via SCP (password)
+        if: ${{ secrets.SSH_PASSWORD != '' }}
+        run: |
+          sshpass -p "$SSH_PASSWORD" scp -o StrictHostKeyChecking=no -P ${SSH_PORT:-22} image.tar ${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/image.tar
+
+      - name: Load image and restart container on remote (password)
+        if: ${{ secrets.SSH_PASSWORD != '' }}
+        run: |
+          sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} "cd ${REMOTE_DIR} && docker load -i image.tar && docker stop ${CONTAINER_NAME} || true && docker rm ${CONTAINER_NAME} || true && docker run -d --name ${CONTAINER_NAME} -p 8000:8000 --restart unless-stopped ${IMAGE_NAME}"
+
+      # --- Key-based SSH path (existing flow) ---
       - name: Prepare SSH key
+        if: ${{ secrets.SSH_KEY != '' && secrets.SSH_PASSWORD == '' }}
         run: |
           # Create private key file from secret and set secure perms
           printf "%s" "$SSH_KEY" > ssh_key
           chmod 600 ssh_key
 
-      - name: Copy image to remote via SCP
+      - name: Copy image to remote via SCP (key)
+        if: ${{ secrets.SSH_KEY != '' && secrets.SSH_PASSWORD == '' }}
         run: |
           scp -o StrictHostKeyChecking=no -i ssh_key -P ${SSH_PORT:-22} image.tar ${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/image.tar
 
-      - name: Load image and restart container on remote
+      - name: Load image and restart container on remote (key)
+        if: ${{ secrets.SSH_KEY != '' && secrets.SSH_PASSWORD == '' }}
         run: |
           ssh -o StrictHostKeyChecking=no -i ssh_key -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} "cd ${REMOTE_DIR} && docker load -i image.tar && docker stop ${CONTAINER_NAME} || true && docker rm ${CONTAINER_NAME} || true && docker run -d --name ${CONTAINER_NAME} -p 8000:8000 --restart unless-stopped ${IMAGE_NAME}"

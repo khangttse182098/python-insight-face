@@ -9,6 +9,8 @@ from insightface.app import FaceAnalysis
 import numpy as np
 from dotenv import load_dotenv
 import os
+from deepface import DeepFace
+import cv2
 
 from type import Pose
 from utils import (
@@ -151,6 +153,54 @@ async def verify_person(userId: str = Form(...), comparedImg: UploadFile = Form(
 
     # convert to array
     decodedImg = convert_image_to_np_array(comparedImg)
+    
+    # Anti-spoofing check using DeepFace
+    try:
+        faces = DeepFace.extract_faces(img_path=decodedImg, anti_spoofing=True)
+        
+        if not faces or len(faces) == 0:
+            return JSONResponse(
+                status_code=HTTPStatus.NOT_FOUND,
+                content={"message": "Không tìm thấy khuôn mặt!"},
+            )
+        
+        # Check for multiple faces
+        if len(faces) > 1:
+            return JSONResponse(
+                status_code=HTTPStatus.CONFLICT,
+                content={"message": "Không thể có nhiều hơn 1 khuôn mặt!"},
+            )
+        
+        face = faces[0]
+        
+        # Check if face is real (anti-spoofing)
+        if not face.get("is_real", False):
+            return JSONResponse(
+                status_code=HTTPStatus.CONFLICT,
+                content={"message": "Phát hiện khuôn mặt giả mạo! Vui lòng sử dụng khuôn mặt thật."},
+            )
+        
+        # Additional check: face should not be too close (occupying too much of the image)
+        img_h, img_w = decodedImg.shape[:2]
+        facial_area = face.get("facial_area", {})
+        if facial_area:
+            face_width = facial_area.get("w", 0)
+            face_ratio = face_width / img_w
+            
+            if face_ratio > 0.45:  # Face covers >45% of image width
+                return JSONResponse(
+                    status_code=HTTPStatus.CONFLICT,
+                    content={"message": "Khuôn mặt quá gần camera! Vui lòng đứng xa hơn."},
+                )
+    
+    except Exception as e:
+        print(f"Anti-spoofing error: {e}")
+        return JSONResponse(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            content={"message": f"Lỗi kiểm tra khuôn mặt: {str(e)}"},
+        )
+    
+    # Proceed with face recognition using insightface
     compared_face = rec_model.get(decodedImg)
 
     if len(compared_face) > 0:
